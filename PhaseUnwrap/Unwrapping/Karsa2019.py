@@ -11,7 +11,25 @@ def _GetIntervalIDs(A):
 	I = np.int32(np.round((6.0*A)/(2.0*np.pi)))
 	return I
 	
-def _ExcludeBridges(Iin):
+def _ExcludeBridges(I0,RepeatExclude=True):
+	
+	bad = 1
+	I = copy.deepcopy(I0)
+	if RepeatExclude:
+		while bad > 0:
+			I,bad = _ExcludeBridgesOnce(I)
+	else:
+		I,bad = _ExcludeBridgesOnce(I)
+	
+	#also remove edges
+	I[0,:] = -1
+	I[-1,:] = -1
+	I[:,0] = -1
+	I[:,-1] = -1
+	
+	return I
+	
+def _ExcludeBridgesOnce(Iin):
 	'''
 	This bit should hopefully remove the interval IDs of the small
 	"bridges" which narrowly join larger regions. In the paper it says
@@ -155,7 +173,8 @@ def _RegionStats(R):
 				#top side
 				if j < nj-1:
 					c += np.int32(R[i,j] != R[i,j+1])
-				Rb[R[i,j]] += c
+				ind = np.where(Ri == R[i,j])[0][0]
+				Rb[ind] += c
 	print("\r{:6.2f}%".format(100.0*((i*nj) + j)/(ni*nj)))
 	return Ri,Rs,Rb
 		
@@ -277,9 +296,68 @@ def _FindNeighbours(r,R):
 			if R[i,j+1] != R[i,j] and not R[i,j+1] in N:
 				N[nN] = R[i,j+1]
 				nN += 1
-	print("\r{:6.2f}%".format(100.0*(k + 1)/nu))	
+	if nu > 0:
+		print("\r{:6.2f}%".format(100.0*(k + 1)/nu))	
 		
 	return N[:nN]
+	
+def _CheckInterfaces(Inds,R,Dir):
+	'''
+	Checks whether a set of interfaces has one or two of the main group
+	'''
+	nI = Inds[0].size
+	ni,nj = R.shape
+	
+	#output arrays
+	r0 = np.zeros((nI,2),dtype='int32')
+	r1 = np.zeros((nI,2),dtype='int32')
+	n0 = np.zeros((nI,2),dtype='int32')
+	
+
+	
+	if Dir == 'l':
+		r0[:,0] = Inds[0] + 1
+		r0[:,1] = Inds[1]
+
+		n0[:,0] = r0[:,0] - 1
+		n0[:,1] = r0[:,1]
+		
+		r1[:,0] = (r0[:,0] + 1).clip(max=ni-1)
+		r1[:,1] = r0[:,1]
+	elif Dir == 'r':
+		r0[:,0] = Inds[0]
+		r0[:,1] = Inds[1]
+
+		n0[:,0] = r0[:,0] + 1
+		n0[:,1] = r0[:,1]
+		
+		r1[:,0] = (r0[:,0] - 1).clip(min=0)
+		r1[:,1] = r0[:,1]
+	elif Dir == 'b':
+		r0[:,0] = Inds[0]
+		r0[:,1] = Inds[1] + 1
+
+		n0[:,0] = r0[:,0]
+		n0[:,1] = r0[:,1] - 1
+		
+		r1[:,0] = r0[:,0]
+		r1[:,1] = (r0[:,1] + 1).clip(max=nj-1)
+	elif Dir == 't':
+		r0[:,0] = Inds[0]
+		r0[:,1] = Inds[1]		
+	
+		n0[:,0] = r0[:,0]
+		n0[:,1] = r0[:,1] + 1
+		
+		r1[:,0] = r0[:,0]
+		r1[:,1] = (r0[:,1] - 1).clip(min=0)		
+		
+	#check where we only have one point from the main group
+	bad = np.where(R[r1[:,0],r1[:,1]] != R[r0[:,0],r0[:,1]])[0]
+	r1[bad] = r0[bad]	
+		
+	return r0,r1,n0
+	
 	
 def _NeighbourInterfaceIndices(r,n,R):
 	'''
@@ -289,13 +367,124 @@ def _NeighbourInterfaceIndices(r,n,R):
 				('r1','int32',(2,)),	#position of voxel behind r0
 				('n0','int32',(2,)),]	#position of neighbouring voxel
 	
-	#find left interfaces (n left of r)
-	left0 = np.where((R[1:-1,:] == r) & (R[2:,:] == r) & (R[:-2,:] == n))
-	left0 = np.where((R[1:-1,:] == r) & (R[2:,:] == r) & (R[:-2,:] == n))
+	# #find left interfaces (n left of r)
+	# left0 = np.where((R[1:-1,:] == r) & (R[2:,:] == r) & (R[:-2,:] == n))
+	# left1 = np.where((R[:-1,:] == n) & (R[1:,:] == r))
+	# nl0 = left0[0].size
+	# nl1 = left1[0].size
+	
+	# #find right interfaces (n left of r)
+	# right0 = np.where((R[1:-1,:] == r) & (R[:-2,:] == r) & (R[2:,:] == n))
+	# right1 = np.where((R[:-1,:] == n) & (R[1:,:] == r))
+	# nr0 = right0[0].size
+	# nr1 = right1[0].size
+	
+	# #find bottom interfaces (n left of r)
+	# bottom0 = np.where((R[:,1:-1] == r) & (R[:,2:] == r) & (R[:,:-2] == n))
+	# bottom1 = np.where((R[:,:-1] == n) & (R[:,1:] == r))
+	# nb0 = bottom0[0].size
+	# nb1 = bottom1[0].size
+	
+	# #find top interfaces (n left of r)
+	# top0 = np.where((R[:,1:-1] == r) & (R[:,:-2] == r) & (R[:,2:] == n))
+	# top1 = np.where((R[:,:-1] == n) & (R[:,1:] == r))
+	# nt0 = top0[0].size
+	# nt1 = top1[0].size
+	
+	left = np.where((R[:-1,:] == n) & (R[1:,:] == r))
+	right = np.where((R[1:,:] == n) & (R[:-1,:] == r))
+	bottom = np.where((R[:,:-1] == n) & (R[:,1:] == r))
+	top = np.where((R[:,1:] == n) & (R[:,:-1] == r))
+	
+	lr0,lr1,ln0 = _CheckInterfaces(left,R,'l')
+	rr0,rr1,rn0 = _CheckInterfaces(right,R,'r')
+	br0,br1,bn0 = _CheckInterfaces(bottom,R,'b')
+	tr0,tr1,tn0 = _CheckInterfaces(top,R,'t')
+	
+	nI = lr0.shape[0] + rr0.shape[0] + br0.shape[0] + tr0.shape[0]
+	
+	NI = np.recarray(nI,dtype=dtype)
+	NI.r0 = np.concatenate((lr0,rr0,br0,tr0),axis=0)
+	NI.r1 = np.concatenate((lr1,rr1,br1,tr1),axis=0)
+	NI.n0 = np.concatenate((ln0,rn0,bn0,tn0),axis=0)
+	
+	return NI
+	
+def _PredictedPhase(NI,A):
+	'''
+	Linearly extrapolate to find predicted phase.
+	
+	'''
+	#get the phase values
+	phi0 = A[NI.r0[:,0],NI.r0[:,1]]
+	phi1 = A[NI.r1[:,0],NI.r1[:,1]]
+	
+	#calculate the output phase
+	#phi = (phi0 - phi1)*2 + phi1
+	phi = 2*phi0 - phi1
+	
+	return phi
+	
+def _CompareNeighbours(r,n,nb,R,A,Plim):
+	'''
+	This routine and its subroutines will look for all of the interfaces
+	between two neighbours, calculate the predicted phase change for each
+	interface, determine whether they should merge and if so, how much
+	of a phase shift is required.
+	
+	Inputs
+	======
+	r	:	int32
+		Main region identifier
+	n	:	int32
+		Identifier for region potentially merging with main region
+	nb	:	int32
+		Number of borders for the whole of region n
+	R	:	int32
+		2D array where each value denotes the region which each phase 
+		value belongs to
+	A	:	float32
+		2D array of phases
+	Plim	:	float32
+		Plimit parameter from the paper from 0.0 - 1.0
+		
+	Returns
+	=======
+	shift	:	bool
+		True if the shift is to take place
+	dphi	:	int32
+		Integer number of 2*pi to shift by
+	
+	'''
+	
+	#get the list of interfaces
+	NI = _NeighbourInterfaceIndices(r,n,R)
+	
+	#calculate the predicted phases
+	phi = _PredictedPhase(NI,A)
+	
+	#actual phase
+	Phi = A[NI.n0[:,0],NI.n0[:,1]]
+	
+	#phase differences (integers, not radians)
+	# Equation 1 of the paper
+	dphi = np.int32(np.round((phi-Phi)/(2.0*np.pi)))
+	
+	#now for the "majority voting"
+	u,c = np.unique(dphi,return_counts=True)
+	imax = c.argmax()
+	Pagree = c[imax]/dphi.size
+	Pborder = dphi.size/nb
+	
+	#equation 2
+	shift = ((1 - Plim)*Pagree) >= (1 - Pborder)
+	if shift:
+		return shift,u[imax]
+	else:
+		return shift,0
 	
 	
-	
-def Karsa2019(Ain):
+def Karsa2019(Ain,Plimit = [0.3,0.1,0.0],Preq=0.7,RepeatExclude=True):
 	'''
 	This code is based on the SEGUE algorithm described in 10.1109/TMI.2018.2884093
 	
@@ -311,10 +500,7 @@ def Karsa2019(Ain):
 	I0 = _GetIntervalIDs(A)
 	
 	#2. Exclude bridges (not sure if you're meant to repeatedly do this, or just once)
-	bad = 1
-	I = copy.deepcopy(I0)
-	while bad > 0:
-		I,bad = _ExcludeBridges(I)
+	I = _ExcludeBridges(I0,RepeatExclude)
 	
 	#3. Group regions
 	R = _GetRegions(I)
@@ -325,31 +511,92 @@ def Karsa2019(Ain):
 	#5. Reassign Excluded
 	R = _AssignExcluded(R,Ri,Rs)	
 	
-	#6. Update the region info to include the excluded points
-	Ri,Rs,Rb = _RegionStats(R)
-	Rdone = np.zeros(Ri.size,dtype='bool')
-	
+
+
 	#Merging!
-	#set Plimit values
-	Plimit = [0.3,0.1,0.0]
-	
+
 	#loop through each one
-	for i in range(0,3):
+	nP = len(Plimit)
+	for i in range(0,nP):
+		print('Merging run {0} of {1}'.format(i+1,nP))
+		#set Plimit value
 		Plim = Plimit[i]
 	
+		#6. Update the region info 
+		Ri,Rs,Rb = _RegionStats(R)
+		Rdone = np.zeros(Ri.size,dtype='bool')
+		Pdone = 0.0
+		#sort the regions by size of border
+		srt = np.argsort(Rb)[::-1]	
+		srtInd = 0	
 		
 		#stop the first loop when most of the regions are unwrapped
 		cont = True
+
 		while cont:
 			nochange = True
 			
 			#1. Start with the one with the largest border
-			Ind = Rb.argmax()
+			Ind = srt[srtInd]
 			Rdone[Ind] = True
 			
 			#2. Look for all neighbouring regions
-			N = _FindNeigbours(Ri[Ind],R)
+			N = _FindNeighbours(Ri[Ind],R)
+			nN = N.size
+			
+			#3. Compare neighbours
+			for i in range(0,nN):
+				print("\rAttempting to merge neighbour {:d} of {:d}".format(i+1,nN),end='')
+				#get the index of the neighbour
+				NInd = np.where(N[i] == Ri)[0][0]
+				
+				if not Rdone[NInd]:	
+					#compare neighbours
+					shift,dphi = _CompareNeighbours(Ri[Ind],Ri[NInd],Rb[NInd],R,A,Plim)
+					
+					if shift:
+						#4. merge the regions
+						nochange = False
+						Rdone[NInd] = True
+						Nloc = np.where(Ri[NInd] == R)
+						R[Nloc] = Ri[Ind]
+						A[Nloc] = A[Nloc] + 2*np.pi*dphi
+					else:
+						#4. don't merge
+						pass
+			if nN > 0:
+				print()
+				
 
+			#Check the total number of merged phases
+			done = np.where(Rdone)[0]
+			ndone = np.sum(Rs[done])
+			Pdone = ndone/A.size
+	
+			#check if there have been no changes, if so then move to the 
+			#next region
+			if nochange:
+				#move to the region with the next largest border
+				nextInd = False
+				while not nextInd:
+				
+					srtInd += 1
+					if srtInd == Rdone.size:
+						nextInd = True
+					elif Rdone[srt[srtInd]]:
+						nextInd = True 
+					
+			
+			#check whether we should go to the next step
+			if (srtInd == srt.size) or ((i == 0) & (Pdone >= Preq)) or Pdone == 1.0:
+				cont = False
+			
+			print("Regions merged: {:d} of {:d} ({:6.2f}% of phases)".format(done.size,Rdone.size,Pdone*100.0))
+		if Pdone == 1.0:
+			break
+			
+	return A,R
+				
+				
 
-
-			#Check the total number of 
+		
